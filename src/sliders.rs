@@ -39,6 +39,8 @@ pub fn fix_all_sliders<'a>(nodes: &[&'a Syntax<'a>]) {
     // TODO: fix sliders that require more than two steps.
     fix_all_sliders_one_step(nodes);
     fix_all_sliders_one_step(nodes);
+
+    fix_all_nested_sliders(nodes);
 }
 
 fn fix_all_sliders_one_step<'a>(nodes: &[&'a Syntax<'a>]) {
@@ -48,6 +50,79 @@ fn fix_all_sliders_one_step<'a>(nodes: &[&'a Syntax<'a>]) {
         }
     }
     fix_sliders(nodes);
+}
+
+fn fix_all_nested_sliders<'a>(nodes: &[&'a Syntax<'a>]) {
+    for node in nodes {
+        fix_nested_slider(node);
+    }
+}
+
+fn fix_nested_slider<'a>(node: &'a Syntax<'a>) {
+    if let List { children, .. } = node {
+        match node.change().unwrap() {
+            Unchanged(_) => {
+                for child in children {
+                    fix_nested_slider(child);
+                }
+            }
+            ReplacedComment(_, _) => {}
+            Novel => {
+                let mut found_unchanged = vec![];
+                for child in children {
+                    unchanged_descendants(child, &mut found_unchanged);
+                }
+
+                if let [List { .. }] = found_unchanged[..] {
+                    push_unchanged_to_ancestor(node, found_unchanged[0]);
+                }
+            }
+        }
+    }
+}
+
+fn unchanged_descendants<'a>(node: &'a Syntax<'a>, found: &mut Vec<&'a Syntax<'a>>) {
+    if found.len() > 1 {
+        return;
+    }
+
+    match node.change().unwrap() {
+        Unchanged(_) => {
+            found.push(node);
+        }
+        Novel | ReplacedComment(_, _) => {
+            if let List { children, .. } = node {
+                for child in children {
+                    unchanged_descendants(child, found);
+                }
+            }
+        }
+    }
+}
+
+fn push_unchanged_to_ancestor<'a>(root: &'a Syntax<'a>, inner: &'a Syntax<'a>) {
+    let inner_change = inner.change().expect("Node changes should be set");
+
+    let delimiters_match = match (root, inner) {
+        (
+            List {
+                open_content: root_open,
+                close_content: root_close,
+                ..
+            },
+            List {
+                open_content: inner_open,
+                close_content: inner_close,
+                ..
+            },
+        ) => root_open == inner_open && root_close == inner_close,
+        _ => false,
+    };
+
+    if delimiters_match {
+        root.set_change(inner_change);
+        inner.set_change(Novel);
+    }
 }
 
 fn fix_sliders<'a>(nodes: &[&'a Syntax<'a>]) {
